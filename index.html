@@ -1,0 +1,1646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>掉线监控器 - 画面静止检测版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 20px;
+        }
+        
+        .container {
+            text-align: center;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+        }
+        
+        h1 {
+            font-size: 2em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .status {
+            font-size: 1.2em;
+            margin: 15px 0;
+            padding: 12px 25px;
+            border-radius: 50px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .status.idle { background: rgba(128, 128, 128, 0.3); color: #ccc; }
+        .status.monitoring { background: rgba(46, 204, 113, 0.3); color: #2ecc71; animation: pulse 2s infinite; }
+        .status.alert { background: rgba(231, 76, 60, 0.3); color: #e74c3c; animation: alert-flash 0.5s infinite; }
+        
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+        @keyframes alert-flash { 
+            0%, 100% { opacity: 1; transform: scale(1); } 
+            50% { opacity: 0.7; transform: scale(1.02); } 
+        }
+        
+        @keyframes alert-flash-bg {
+            0%, 100% { background-color: rgba(231, 76, 60, 0.95); }
+            50% { background-color: rgba(192, 57, 43, 0.98); }
+        }
+        
+        .btn {
+            padding: 12px 30px;
+            font-size: 1em;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            margin: 8px;
+            transition: all 0.3s ease;
+            font-weight: bold;
+        }
+        
+        .btn-test-small {
+            padding: 5px 15px;
+            font-size: 0.9em;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            background: linear-gradient(135deg, #9b59b6, #8e44ad);
+            color: white;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-test-small:hover {
+            transform: scale(1.05);
+            box-shadow: 0 3px 15px rgba(155, 89, 182, 0.4);
+        }
+        
+        .btn-test-small.playing {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            animation: pulse 0.5s infinite;
+        }
+        
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-start { background: linear-gradient(135deg, #2ecc71, #27ae60); color: white; }
+        .btn-stop { background: linear-gradient(135deg, #e74c3c, #c0392b); color: white; }
+        .btn-silent { background: linear-gradient(135deg, #f39c12, #d68910); color: white; animation: pulse 1s infinite; }
+        .btn-test { background: linear-gradient(135deg, #3498db, #2980b9); color: white; }
+        
+        .preview-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+        }
+        
+        .preview-section h3 {
+            color: #3498db;
+            margin-bottom: 10px;
+        }
+        
+        .preview-container {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+            max-height: 300px;
+        }
+        
+        #previewVideo, #monitorCanvas {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        
+        #monitorCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .source-selection {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin: 15px 0;
+        }
+        
+        .source-btn {
+            padding: 10px 20px;
+            border: 2px solid #3498db;
+            background: transparent;
+            color: #3498db;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .source-btn:hover, .source-btn.active {
+            background: #3498db;
+            color: white;
+        }
+        
+        .detection-panel {
+            margin: 15px 0;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+        
+        .detection-panel h4 {
+            color: #3498db;
+            margin-bottom: 10px;
+        }
+        
+        .detection-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            margin: 5px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 5px;
+        }
+        
+        .status-indicator {
+            padding: 3px 10px;
+            border-radius: 10px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        
+        .status-indicator.normal { background: rgba(46, 204, 113, 0.3); color: #2ecc71; }
+        .status-indicator.warning { background: rgba(231, 76, 60, 0.3); color: #e74c3c; }
+        .status-indicator.inactive { background: rgba(128, 128, 128, 0.3); color: #999; }
+        
+        .settings {
+            margin: 15px 0;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+        }
+        
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 10px 0;
+        }
+        
+        .setting-row label {
+            color: #bdc3c7;
+        }
+        
+        .setting-row input[type="range"] {
+            width: 150px;
+        }
+        
+        .setting-row input[type="number"] {
+            width: 80px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: none;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            text-align: center;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #2ecc71, #f39c12, #e74c3c);
+            transition: width 0.1s;
+            width: 0%;
+        }
+        
+        .progress-fill.alert {
+            background: #e74c3c;
+            animation: alert-flash 0.3s infinite;
+        }
+        
+        .info {
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            font-size: 0.85em;
+            text-align: left;
+        }
+        
+        .info h3 {
+            color: #3498db;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .info ul {
+            list-style: none;
+        }
+        
+        .info li {
+            padding: 5px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+        
+        .info li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #2ecc71;
+        }
+        
+        .hidden { display: none !important; }
+        
+        .alert-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(231, 76, 60, 0.95);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            flex-direction: column;
+            animation: alert-flash-bg 0.2s infinite;
+        }
+        
+        .alert-overlay.show { display: flex; }
+        
+        .alert-overlay h1 {
+            font-size: 3em;
+            animation: alert-flash 0.3s infinite;
+        }
+        
+        .alert-overlay .btn {
+            font-size: 1.5em;
+            margin-top: 30px;
+        }
+        
+        .window-selector {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+        
+        .window-selector.show { display: flex; }
+        
+        .window-list {
+            background: #1a1a2e;
+            padding: 20px;
+            border-radius: 15px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .window-list h3 {
+            color: #3498db;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .window-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            margin: 8px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .window-item:hover {
+            background: rgba(52, 152, 219, 0.3);
+        }
+        
+        .window-item img {
+            width: 80px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 5px;
+            margin-right: 15px;
+        }
+        
+        .window-item .info {
+            flex: 1;
+            padding: 0;
+            background: none;
+        }
+        
+        .window-item .title {
+            color: white;
+            font-weight: bold;
+        }
+        
+        .window-item .app {
+            color: #7f8c8d;
+            font-size: 0.85em;
+        }
+        
+        /* 视频教程弹窗 */
+        .video-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10001;
+        }
+        
+        .video-modal.show { display: flex; }
+        
+        .video-container {
+            background: #1a1a2e;
+            padding: 20px;
+            border-radius: 15px;
+            max-width: 800px;
+            width: 90%;
+            max-height: 90vh;
+            overflow: hidden;
+        }
+        
+        .video-container h3 {
+            color: #3498db;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .tutorial-video {
+            width: 100%;
+            max-height: 60vh;
+            border-radius: 10px;
+            background: #000;
+        }
+        
+        .video-container .close-btn {
+            display: block;
+            margin: 15px auto 0;
+            padding: 10px 30px;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .video-container .close-btn:hover {
+            transform: scale(1.05);
+        }
+        
+        .btn-tutorial {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- 告警覆盖层 -->
+    <div id="alertOverlay" class="alert-overlay">
+        <div style="animation: alert-flash 0.15s infinite;">
+            <h1>🚨⚠️ 画面静止警告 ⚠️🚨</h1>
+            <p style="font-size: 1.8em; margin-top: 20px; color: #ffeb3b;">
+                检测到画面长时间无变化请检查是否已掉线！
+            </p>
+            <p style="font-size: 1.5em; margin-top: 10px;">
+                先操作游戏窗口，再点击下方关闭按钮即可
+            </p>
+        </div>
+        <button class="btn btn-silent" onclick="stopAlert()" style="margin-top: 40px; font-size: 1.3em; padding: 15px 40px;">
+            🔇 关闭语音提醒
+        </button>
+    </div>
+    
+    <!-- 窗口选择器 -->
+    <div id="windowSelector" class="window-selector">
+        <div class="window-list">
+            <h3>选择要监控的窗口</h3>
+            <div id="windowList"></div>
+            <div style="text-align: center; margin-top: 15px;">
+                <button class="btn btn-stop" onclick="closeWindowSelector()">取消</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 视频教程弹窗 -->
+    <div id="videoModal" class="video-modal">
+        <div class="video-container">
+            <h3>📹 使用教程</h3>
+            <video id="tutorialVideo" class="tutorial-video" controls>
+                <source src="file:///C:/Users/admin/Videos/shipin.mp4" type="video/mp4">
+                您的浏览器不支持视频播放，请使用Chrome或Edge浏览器
+            </video>
+            <button class="close-btn" onclick="closeVideoModal()">✖ 关闭</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>🔔 掉线监控器 - 画面静止检测</h1>
+        
+        <div id="status" class="status idle">⚪ 未启动监控</div>
+        
+        <!-- 视频教程按钮 - 放在顶部 -->
+        <div style="margin: 20px 0;">
+            <button class="btn btn-tutorial" onclick="openVideoModal()" style="font-size: 1.1em; padding: 15px 40px;">
+                📹 查看使用教程
+            </button>
+        </div>
+        
+        <!-- 预览区域 -->
+        <div class="preview-section">
+            <h3>📺 监控画面预览，请确保游戏窗口没有被遮挡！</h3>
+            <div class="preview-container">
+                <video id="previewVideo" autoplay muted playsinline></video>
+                <canvas id="monitorCanvas"></canvas>
+            </div>
+            <p id="previewHint" style="color: #7f8c8d; margin-top: 10px;">
+                点击下方按钮选择要监控的窗口，下方参数建议用默认设置，无需修改
+            </p>
+        </div>
+        
+        <!-- 静止时间进度条 -->
+        <div id="staticProgress" class="hidden">
+            <div class="detection-item">
+                <span>画面静止时间</span>
+                <span id="staticTime">0.0 秒</span>
+            </div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+        </div>
+        
+        <!-- 检测状态面板 -->
+        <div id="detectionPanel" class="detection-panel hidden">
+            <h4>🔍 实时检测状态</h4>
+            <div class="detection-item">
+                <span>画面状态</span>
+                <span id="frameStatus" class="status-indicator inactive">未激活</span>
+            </div>
+            <div class="detection-item">
+                <span>变化检测</span>
+                <span id="changeStatus" class="status-indicator inactive">未激活</span>
+            </div>
+            <div class="detection-item">
+                <span>帧率</span>
+                <span id="fpsStatus" class="status-indicator inactive">-- FPS</span>
+            </div>
+            <div class="detection-item">
+                <span>相似度</span>
+                <span id="similarityStatus" class="status-indicator inactive">--%</span>
+            </div>
+            <div class="detection-item">
+                <span>画面变化</span>
+                <span id="changeRatio" class="status-indicator inactive">--%</span>
+            </div>
+        </div>
+        
+        <!-- 设置区域 -->
+        <div class="settings">
+            <div class="setting-row">
+                <label>静止阈值（秒） 画面静止多少秒后触发掉线警告：</label>
+                <input type="number" id="staticThreshold" value="5" min="1" max="60">
+            </div>
+            <div class="setting-row">
+                <label>变化灵敏度：<span style="color:#7f8c8d;font-size:0.75em;">(画面变化多少才算静止)</span></label>
+                <input type="range" id="sensitivity" min="1" max="100" value="30">
+                <span id="sensitivityValue">30</span>
+                <span id="sensitivityHint" style="color: #7f8c8d; font-size: 0.8em;"></span>
+            </div>
+            <div class="setting-row" style="background: rgba(52,152,219,0.1); padding: 8px; border-radius: 5px; margin: 5px 0;">
+                <span style="font-size: 0.85em; color: #3498db;">
+                    🎮 游戏推荐（如梦幻西游） <strong>20-40</strong>
+                </span>
+            </div>
+            <div class="setting-row">
+                <label>检测间隔（毫秒，指每多少毫秒检测一次画面变化）：</label>
+                <input type="number" id="checkInterval" value="100" min="33" max="500">
+                <span style="color: #7f8c8d; font-size: 0.8em;">（建议50-100ms）</span>
+            </div>
+            <div class="setting-row">
+                <label>采样精度：<span style="color:#7f8c8d;font-size:0.75em;">(每次检测采集多少像素)</span></label>
+                <select id="sampleAccuracy">
+                    <option value="low">低 - 5000点（快速，适合高帧率游戏）</option>
+                    <option value="medium" selected>中 - 20000点（平衡，推荐，梦幻西游可以选这个）</option>
+                    <option value="high">高 - 50000点（精确，适合静态/慢画面）</option>
+                </select>
+            </div>
+            <div class="setting-row" style="background: rgba(52,152,219,0.1); padding: 8px; border-radius: 5px; margin: 5px 0;">
+                <span style="font-size: 0.85em; color: #3498db;">
+                    🎮 高帧率游戏选 <strong>低</strong> | 📺 梦幻西游可以选 <strong>中</strong> | 📄 其他动效非常慢的画面选 <strong>高</strong>
+                </span>
+            </div>
+            <div class="setting-row">
+                <label>告警音效：</label>
+                <select id="alertSoundType">
+                    <option value="nuke">💥 音效1</option>
+                    <option value="mega">🚨 超级警报（防空警报+语音）</option>
+                    <option value="missile">🚀 导弹警告（核弹警报风格）</option>
+                    <option value="siren">🔔 防空警报（经典警报声）</option>
+                    <option value="urgent">⚠️ 紧急警报（急促警报）</option>
+                    <option value="voice">📢 仅语音提醒</option>
+                </select>
+                <button class="btn-test-small" onclick="previewAlertSound()">🔊 试听</button>
+            </div>
+        </div>
+        
+        <!-- 按钮区域 -->
+        <div id="buttons">
+            <button id="selectBtn" class="btn btn-test" onclick="selectWindow()">
+                📺 选择监控窗口
+            </button>
+            <button id="startBtn" class="btn btn-start" onclick="startMonitoring()" disabled>
+                ▶️ 开始监控
+            </button>
+            <button id="stopBtn" class="btn btn-stop hidden" onclick="stopMonitoring()">
+                ⏹️ 停止监控
+            </button>
+            <button id="silentBtn" class="btn btn-silent hidden" onclick="stopAlert()">
+                🔇 关闭语音提醒
+            </button>
+            <button id="testBtn" class="btn btn-test" onclick="testSpeech()">
+                🔔 测试语音
+            </button>
+        </div>
+        
+        <div id="alertCount" style="margin-top: 15px; color: #e74c3c;">
+            已触发提醒: <span id="count">0</span> 次
+        </div>
+        
+        <div class="info">
+            <h3>📋 使用说明</h3>
+            <ul>
+                <li><strong>★推荐默认参数直接用，不需要修改★</strong></li>
+                <li><strong>选择窗口</strong>：点击按钮选择要监控的浏览器/应用窗口</li>
+                <li><strong>画面检测</strong>：持续对比画面变化，静止超过阈值触发告警（意思是画面静止超过N秒后，触发告警）</li>
+                <li><strong>静止阈值</strong>：画面无变化的持续时间，超过即视为掉线（意思是画面静止超过N秒后，触发告警）</li>
+                <li><strong>灵敏度</strong>：数值越小越敏感，轻微变化也会检测到（默认数值就可以）</li>
+                <li><strong>适用场景</strong>：游戏挂机，如梦幻西游半夜挂符，担心掉线，就可以开监控，记得把音量开大，不要让游戏窗口被遮挡</li>
+                <li>【修改完参数，需要重新监控才生效】</li>
+            </ul>
+        </div>
+        
+        <div style="margin-top: 20px; padding: 15px; text-align: center; color: #7f8c8d; font-size: 0.85em; border-top: 1px solid rgba(255,255,255,0.1);">
+            由 <a href="https://xymhxy.github.io/home/" style="color: #3498db;" target="_blank">xyanwechat</a> 个人学习使用，请勿用于任何非学习用途
+        </div>
+    </div>
+
+    <script>
+        // ============ 视频教程弹窗 ============
+        function openVideoModal() {
+            document.getElementById('videoModal').classList.add('show');
+        }
+        
+        function closeVideoModal() {
+            const video = document.getElementById('tutorialVideo');
+            video.pause();
+            document.getElementById('videoModal').classList.remove('show');
+        }
+        
+        // 点击背景关闭视频弹窗
+        document.getElementById('videoModal')?.addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeVideoModal();
+            }
+        });
+        
+        // ============ 状态变量 ============
+        let isMonitoring = false;
+        let isAlerting = false;
+        let alertCount = 0;
+        let mediaStream = null;
+        let videoElement = null;
+        let canvasElement = null;
+        let canvasCtx = null;
+        
+        let lastFrameData = null;
+        let staticStartTime = null;
+        let checkIntervalId = null;
+        let frameCount = 0;
+        let lastFpsTime = Date.now();
+        let currentFps = 0;
+        
+        // ============ 语音合成 ============
+        let speechEngine = null;
+        let speechInterval = null;
+        let bgGainNode = null;  // 背景音效增益节点，用于调节背景音量
+        
+        function initSpeech() {
+            speechEngine = new SpeechSynthesisUtterance();
+            speechEngine.text = "你掉线了 你掉线了";
+            speechEngine.lang = "zh-CN";
+            speechEngine.rate = 0.9;  // 语速稍慢更清晰
+            speechEngine.volume = 1.0;  // 最大音量
+            speechEngine.pitch = 1.1;  // 音调稍高更醒目
+            
+            // 选择中文语音
+            const voices = speechSynthesis.getVoices();
+            const zhVoice = voices.find(v => v.lang.includes('zh'));
+            if (zhVoice) {
+                speechEngine.voice = zhVoice;
+            }
+        }
+        
+        // 页面加载时初始化语音
+        if (speechSynthesis) {
+            speechSynthesis.onvoiceschanged = initSpeech;
+            initSpeech();
+        }
+        
+        // ============ 窗口选择 ============
+        async function selectWindow() {
+            try {
+                // 使用 getDisplayMedia API 选择窗口
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        cursor: "never"
+                    },
+                    audio: false
+                });
+                
+                mediaStream = stream;
+                videoElement = document.getElementById('previewVideo');
+                videoElement.srcObject = stream;
+                
+                // 等待视频加载
+                await videoElement.play();
+                
+                // 初始化画布
+                canvasElement = document.getElementById('monitorCanvas');
+                canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
+                
+                // 设置画布大小
+                videoElement.onloadedmetadata = () => {
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
+                };
+                
+                // 更新UI
+                document.getElementById('previewHint').textContent = '已选择窗口，可以开始监控';
+                document.getElementById('previewHint').style.color = '#2ecc71';
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('selectBtn').textContent = '🔄 重新选择窗口';
+                
+                // 监听流结束
+                stream.getVideoTracks()[0].onended = () => {
+                    if (isMonitoring) {
+                        stopMonitoring();
+                    }
+                    document.getElementById('previewHint').textContent = '窗口已关闭，请重新选择';
+                    document.getElementById('previewHint').style.color = '#e74c3c';
+                    document.getElementById('startBtn').disabled = true;
+                    document.getElementById('selectBtn').textContent = '📺 选择监控窗口';
+                };
+                
+            } catch (err) {
+                console.error('选择窗口失败:', err);
+                if (err.name === 'NotAllowedError') {
+                    alert('您取消了窗口选择');
+                } else {
+                    alert('选择窗口失败: ' + err.message);
+                }
+            }
+        }
+        
+        // ============ 监控控制 ============
+        function startMonitoring() {
+            if (!mediaStream || !videoElement) {
+                alert('请先选择要监控的窗口');
+                return;
+            }
+            
+            isMonitoring = false;
+            isAlerting = false;
+            staticStartTime = null;
+            lastFrameData = null;
+            frameCount = 0;
+            lastFpsTime = Date.now();
+            
+            // 更新UI
+            document.getElementById('status').className = 'status monitoring';
+            document.getElementById('status').textContent = '🟢 监控中... 画面正常';
+            document.getElementById('startBtn').classList.add('hidden');
+            document.getElementById('stopBtn').classList.remove('hidden');
+            document.getElementById('selectBtn').disabled = true;
+            document.getElementById('testBtn').classList.add('hidden');
+            document.getElementById('detectionPanel').classList.remove('hidden');
+            document.getElementById('staticProgress').classList.remove('hidden');
+            
+            // 更新检测状态
+            updateStatus('frameStatus', '正常', 'normal');
+            updateStatus('changeStatus', '检测中', 'normal');
+            updateStatus('fpsStatus', '-- FPS', 'normal');
+            updateStatus('similarityStatus', '--%', 'normal');
+            
+            // 初始化音频
+            initAudio();
+            
+            // 开始监控
+            isMonitoring = true;
+            startFrameCheck();
+        }
+        
+        function stopMonitoring() {
+            isMonitoring = false;
+            stopAlert();
+            
+            if (checkIntervalId) {
+                clearInterval(checkIntervalId);
+                checkIntervalId = null;
+            }
+            
+            lastFrameData = null;
+            staticStartTime = null;
+            
+            // 更新UI
+            document.getElementById('status').className = 'status idle';
+            document.getElementById('status').textContent = '⚪ 监控已停止';
+            document.getElementById('startBtn').classList.remove('hidden');
+            document.getElementById('stopBtn').classList.add('hidden');
+            document.getElementById('selectBtn').disabled = false;
+            document.getElementById('testBtn').classList.remove('hidden');
+            document.getElementById('detectionPanel').classList.add('hidden');
+            document.getElementById('staticProgress').classList.add('hidden');
+            
+            // 重置进度条
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('staticTime').textContent = '0.0 秒';
+            
+            // 重置状态
+            updateStatus('frameStatus', '未激活', 'inactive');
+            updateStatus('changeStatus', '未激活', 'inactive');
+            updateStatus('fpsStatus', '-- FPS', 'inactive');
+            updateStatus('similarityStatus', '--%', 'inactive');
+            updateStatus('changeRatio', '--%', 'inactive');
+        }
+        
+        // ============ 画面检测 ============
+        function startFrameCheck() {
+            const checkInterval = parseInt(document.getElementById('checkInterval').value) || 200;
+            const threshold = parseInt(document.getElementById('staticThreshold').value) || 5;
+            const sensitivity = parseInt(document.getElementById('sensitivity').value) || 5;
+            
+            checkIntervalId = setInterval(() => {
+                if (!isMonitoring) return;
+                
+                try {
+                    // 捕获当前帧
+                    const currentFrame = captureFrame();
+                    if (!currentFrame) return;
+                    
+                    // 计算FPS
+                    frameCount++;
+                    const now = Date.now();
+                    if (now - lastFpsTime >= 1000) {
+                        currentFps = frameCount;
+                        frameCount = 0;
+                        lastFpsTime = now;
+                        updateStatus('fpsStatus', `${currentFps} FPS`, 'normal');
+                    }
+                    
+                    // 对比帧差异
+                    if (lastFrameData) {
+                        const similarity = calculateSimilarity(currentFrame, lastFrameData);
+                        const similarityPercent = (similarity * 100).toFixed(1);
+                        
+                        updateStatus('similarityStatus', `${similarityPercent}%`, 
+                            similarity > 0.99 ? 'warning' : 'normal');
+                        
+                        // 判断画面是否静止
+                        // 灵敏度越高，阈值越低（越容易检测到变化）
+                        // 灵敏度转换为变化阈值
+                        // 灵敏度 1-100 对应 变化阈值 0.001-0.1
+                        // 即：灵敏度越高，检测到更小的变化就认为画面在动
+                        const minChangeThreshold = sensitivity / 1000;  // 最小变化阈值
+                        
+                        // 如果相似度接近1（几乎没变化），且变化像素比例很低
+                        const changeRatio = 1 - similarity;
+                        
+                        // 调试输出
+                        // console.log(`相似度: ${similarity.toFixed(4)}, 变化比例: ${changeRatio.toFixed(4)}, 阈值: ${minChangeThreshold.toFixed(4)}`);
+                        
+                        // 只有当变化比例低于阈值时才认为画面静止
+                        // 灵敏度30表示：变化<3%才算静止
+                        if (changeRatio < minChangeThreshold) {
+                            // 画面静止
+                            if (!staticStartTime) {
+                                staticStartTime = Date.now();
+                            }
+                            
+                            const staticDuration = (Date.now() - staticStartTime) / 1000;
+                            const progress = Math.min(staticDuration / threshold * 100, 100);
+                            
+                            // 更新进度条
+                            document.getElementById('progressFill').style.width = `${progress}%`;
+                            document.getElementById('staticTime').textContent = `${staticDuration.toFixed(1)} 秒`;
+                            
+                            updateStatus('changeStatus', '画面静止', 'warning');
+                            
+                            // 超过阈值触发告警
+                            if (staticDuration >= threshold) {
+                                triggerAlert();
+                            }
+                        } else {
+                            // 画面有变化
+                            staticStartTime = null;
+                            document.getElementById('progressFill').style.width = '0%';
+                            document.getElementById('staticTime').textContent = '0.0 秒';
+                            
+                            updateStatus('changeStatus', '画面变化', 'normal');
+                            
+                            // 如果之前在告警，停止
+                            if (isAlerting && isMonitoring) {
+                                stopAlert();
+                                document.getElementById('status').className = 'status monitoring';
+                                document.getElementById('status').textContent = '🟢 监控中... 画面正常';
+                            }
+                        }
+                    }
+                    
+                    // 保存当前帧
+                    lastFrameData = currentFrame;
+                    
+                } catch (err) {
+                    console.error('帧检测错误:', err);
+                }
+            }, checkInterval);
+        }
+        
+        function captureFrame() {
+            if (!videoElement || !canvasCtx || !canvasElement) return null;
+            
+            try {
+                // 确保画布尺寸正确
+                if (canvasElement.width !== videoElement.videoWidth || 
+                    canvasElement.height !== videoElement.videoHeight) {
+                    canvasElement.width = videoElement.videoWidth;
+                    canvasElement.height = videoElement.videoHeight;
+                }
+                
+                // 绘制当前帧
+                canvasCtx.drawImage(videoElement, 0, 0);
+                
+                // 获取像素数据
+                return canvasCtx.getImageData(0, 0, canvasElement.width, canvasElement.height);
+            } catch (err) {
+                console.error('捕获帧失败:', err);
+                return null;
+            }
+        }
+        
+        function calculateSimilarity(frame1, frame2) {
+            // 使用更精确的采样和差异计算
+            const data1 = frame1.data;
+            const data2 = frame2.data;
+            
+            if (data1.length !== data2.length) return 0;
+            
+            const accuracy = document.getElementById('sampleAccuracy').value;
+            
+            // 根据精度设置采样数量
+            let sampleCount;
+            switch(accuracy) {
+                case 'high':
+                    sampleCount = 50000;  // 高精度：采样更多像素
+                    break;
+                case 'medium':
+                    sampleCount = 20000;  // 中等精度
+                    break;
+                case 'low':
+                    sampleCount = 5000;   // 低精度：快速检测
+                    break;
+                default:
+                    sampleCount = 20000;
+            }
+            
+            const totalPixels = data1.length / 4;
+            const sampleStep = Math.max(1, Math.floor(totalPixels / sampleCount));
+            
+            let changedPixels = 0;
+            let totalDiff = 0;
+            let actualSamples = 0;
+            
+            for (let i = 0; i < data1.length; i += 4 * sampleStep) {
+                actualSamples++;
+                
+                // 计算RGB差异（使用平方差更敏感）
+                const rDiff = data1[i] - data2[i];
+                const gDiff = data1[i + 1] - data2[i + 1];
+                const bDiff = data1[i + 2] - data2[i + 2];
+                
+                // 使用欧几里得距离计算颜色差异
+                const colorDiff = Math.sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
+                
+                // 阈值：只有差异超过一定值才算变化（过滤噪点）
+                if (colorDiff > 10) {  // 颜色差异阈值
+                    changedPixels++;
+                    totalDiff += colorDiff;
+                }
+            }
+            
+            // 计算变化像素比例
+            const changeRatio = changedPixels / actualSamples;
+            
+            // 更新界面显示变化比例
+            const changePercent = (changeRatio * 100).toFixed(2);
+            document.getElementById('changeRatio').textContent = `${changePercent}%`;
+            
+            // 返回相似度（1 - 变化比例）
+            return 1 - changeRatio;
+        }
+        
+        // ============ 音频系统 ============
+        let audioContext = null;
+        let alertOscillators = [];
+        let alertGainNode = null;
+        let alertInterval = null;
+        
+        function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                // 解锁音频上下文
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                // 创建静音音频解锁
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = 0.001;
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.05);
+            } catch (e) {
+                console.log('音频初始化失败:', e);
+            }
+        }
+        
+        // 防空警报音效
+        function playAirRaidSiren() {
+            if (!audioContext) return;
+            
+            stopAllSounds();
+            
+            // 创建背景音效增益节点，降低背景音量让语音更突出
+            bgGainNode = audioContext.createGain();
+            bgGainNode.gain.value = 0.08;  // 背景音效降低到8%
+            bgGainNode.connect(audioContext.destination);
+            
+            // 创建警报声
+            const osc1 = audioContext.createOscillator();
+            const osc2 = audioContext.createOscillator();
+            
+            osc1.type = 'sawtooth';
+            osc2.type = 'square';
+            
+            osc1.connect(bgGainNode);
+            osc2.connect(bgGainNode);
+            
+            // 警报音调循环
+            let freq = 500;
+            let goingUp = true;
+            
+            const freqInterval = setInterval(() => {
+                if (!isAlerting) {
+                    clearInterval(freqInterval);
+                    return;
+                }
+                
+                if (goingUp) {
+                    freq += 15;
+                    if (freq >= 800) goingUp = false;
+                } else {
+                    freq -= 15;
+                    if (freq <= 400) goingUp = true;
+                }
+                
+                osc1.frequency.setValueAtTime(freq, audioContext.currentTime);
+                osc2.frequency.setValueAtTime(freq * 1.5, audioContext.currentTime);
+            }, 20);
+            
+            osc1.start();
+            osc2.start();
+            
+            alertOscillators.push(osc1, osc2);
+            alertInterval = freqInterval;
+        }
+        
+        // 导弹警告音效
+        function playMissileAlert() {
+            if (!audioContext) return;
+            
+            stopAllSounds();
+            
+            // 创建背景音效增益节点
+            bgGainNode = audioContext.createGain();
+            bgGainNode.gain.value = 0.1;  // 背景音效降低到10%
+            bgGainNode.connect(audioContext.destination);
+            
+            // 低频脉冲
+            const pulseOsc = audioContext.createOscillator();
+            pulseOsc.type = 'sine';
+            pulseOsc.frequency.value = 100;
+            pulseOsc.connect(bgGainNode);
+            
+            // 高频警告
+            const warnOsc = audioContext.createOscillator();
+            warnOsc.type = 'square';
+            warnOsc.frequency.value = 800;
+            warnOsc.connect(bgGainNode);
+            
+            // 脉冲调制
+            let pulsePhase = 0;
+            const pulseInterval = setInterval(() => {
+                if (!isAlerting) {
+                    clearInterval(pulseInterval);
+                    return;
+                }
+                
+                pulsePhase = (pulsePhase + 0.1) % (Math.PI * 2);
+                const volume = 0.3 + Math.abs(Math.sin(pulsePhase)) * 0.4;
+                alertGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+                
+                // 频率跳变
+                if (Math.random() > 0.5) {
+                    warnOsc.frequency.setValueAtTime(600 + Math.random() * 400, audioContext.currentTime);
+                }
+            }, 50);
+            
+            pulseOsc.start();
+            warnOsc.start();
+            
+            alertOscillators.push(pulseOsc, warnOsc);
+            alertInterval = pulseInterval;
+        }
+        
+        // 紧急警报音效
+        function playUrgentAlert() {
+            if (!audioContext) return;
+            
+            stopAllSounds();
+            
+            // 创建背景音效增益节点
+            bgGainNode = audioContext.createGain();
+            bgGainNode.gain.value = 0.12;  // 背景音效降低到12%
+            bgGainNode.connect(audioContext.destination);
+            
+            const osc = audioContext.createOscillator();
+            osc.type = 'square';
+            osc.connect(bgGainNode);
+            
+            let beepCount = 0;
+            const beepInterval = setInterval(() => {
+                if (!isAlerting) {
+                    clearInterval(beepInterval);
+                    return;
+                }
+                
+                // 快速滴滴声
+                const now = audioContext.currentTime;
+                osc.frequency.setValueAtTime(1000, now);
+                alertGainNode.gain.setValueAtTime(0.6, now);
+                alertGainNode.gain.setValueAtTime(0, now + 0.1);
+                alertGainNode.gain.setValueAtTime(0.6, now + 0.2);
+                alertGainNode.gain.setValueAtTime(0, now + 0.3);
+                
+                beepCount++;
+            }, 400);
+            
+            osc.start();
+            alertOscillators.push(osc);
+            alertInterval = beepInterval;
+        }
+        
+        // 🔥 红警核弹发射音效（经典！）
+        function playRedAlertNuke() {
+            if (!audioContext) return;
+            
+            stopAllSounds();
+            
+            // 创建背景音效增益节点
+            bgGainNode = audioContext.createGain();
+            bgGainNode.gain.value = 0.06;  // 背景音效降低到6%（核弹音效背景较重）
+            bgGainNode.connect(audioContext.destination);
+            
+            // ========== 阶段1: 上升音调（发射前的紧张感）==========
+            const riseOsc = audioContext.createOscillator();
+            const riseGain = audioContext.createGain();
+            riseOsc.type = 'sawtooth';
+            riseOsc.frequency.value = 200;
+            riseGain.gain.value = 0.15;
+            riseOsc.connect(riseGain);
+            riseGain.connect(audioContext.destination);
+            
+            // 上升音调
+            const now = audioContext.currentTime;
+            riseOsc.frequency.setValueAtTime(150, now);
+            riseOsc.frequency.exponentialRampToValueAtTime(800, now + 0.8);
+            riseGain.gain.setValueAtTime(0.15, now);
+            riseGain.gain.exponentialRampToValueAtTime(0.01, now + 1.2);
+            
+            riseOsc.start(now);
+            riseOsc.stop(now + 1.2);
+            alertOscillators.push(riseOsc);
+            
+            // ========== 阶段2: 低沉轰鸣（核弹发射）==========
+            const boomOsc = audioContext.createOscillator();
+            const boomGain = audioContext.createGain();
+            boomOsc.type = 'sine';
+            boomOsc.frequency.value = 60;
+            boomGain.gain.value = 0;
+            boomOsc.connect(boomGain);
+            boomGain.connect(audioContext.destination);
+            
+            // 发射轰鸣
+            boomGain.gain.setValueAtTime(0, now + 0.5);
+            boomGain.gain.linearRampToValueAtTime(0.4, now + 0.8);
+            boomGain.gain.linearRampToValueAtTime(0.2, now + 1.5);
+            boomGain.gain.linearRampToValueAtTime(0, now + 2.5);
+            
+            boomOsc.start(now + 0.5);
+            boomOsc.stop(now + 2.5);
+            alertOscillators.push(boomOsc);
+            
+            // ========== 阶段3: 高频警报循环 ==========
+            setTimeout(() => {
+                if (!isAlerting) return;
+                
+                // 红警风格的高低音交替警报
+                const alertOsc1 = audioContext.createOscillator();
+                const alertOsc2 = audioContext.createOscillator();
+                const alertGain = audioContext.createGain();
+                
+                alertOsc1.type = 'square';
+                alertOsc2.type = 'square';
+                alertGain.gain.value = 0.08;
+                
+                alertOsc1.connect(alertGain);
+                alertOsc2.connect(alertGain);
+                alertGain.connect(bgGainNode);
+                
+                // 高低音交替
+                let highTone = true;
+                const toneInterval = setInterval(() => {
+                    if (!isAlerting) {
+                        clearInterval(toneInterval);
+                        return;
+                    }
+                    
+                    const t = audioContext.currentTime;
+                    if (highTone) {
+                        alertOsc1.frequency.setValueAtTime(880, t);  // A5
+                        alertOsc2.frequency.setValueAtTime(1760, t); // A6
+                    } else {
+                        alertOsc1.frequency.setValueAtTime(660, t);  // E5
+                        alertOsc2.frequency.setValueAtTime(1320, t); // E6
+                    }
+                    highTone = !highTone;
+                }, 250);
+                
+                alertOsc1.start();
+                alertOsc2.start();
+                alertOscillators.push(alertOsc1, alertOsc2);
+                alertInterval = toneInterval;
+                
+            }, 1500);
+            
+            // ========== 阶段4: 电子哔音（红警特色）==========
+            const beepOsc = audioContext.createOscillator();
+            const beepGain = audioContext.createGain();
+            beepOsc.type = 'sine';
+            beepOsc.frequency.value = 1200;
+            beepGain.gain.value = 0;
+            beepOsc.connect(beepGain);
+            beepGain.connect(audioContext.destination);
+            
+            // 快速哔音
+            let beepPhase = 0;
+            const beepInterval = setInterval(() => {
+                if (!isAlerting) {
+                    clearInterval(beepInterval);
+                    return;
+                }
+                
+                const t = audioContext.currentTime;
+                beepGain.gain.setValueAtTime(0.12, t);
+                beepGain.gain.setValueAtTime(0, t + 0.05);
+                beepGain.gain.setValueAtTime(0.12, t + 0.1);
+                beepGain.gain.setValueAtTime(0, t + 0.15);
+                
+                beepPhase++;
+            }, 200);
+            
+            beepOsc.start();
+            alertOscillators.push(beepOsc);
+            
+            // 存储interval以便停止
+            if (!alertInterval) {
+                alertInterval = beepInterval;
+            }
+        }
+        
+        // 超级警报（防空警报+语音）
+        function playMegaAlert() {
+            if (!audioContext) return;
+            
+            playAirRaidSiren();
+            
+            // 叠加低频震动（独立控制）
+            const bassOsc = audioContext.createOscillator();
+            const bassGain = audioContext.createGain();
+            bassOsc.type = 'sine';
+            bassOsc.frequency.value = 50;
+            bassGain.gain.value = 0.1;  // 低频震动10%
+            bassOsc.connect(bassGain);
+            bassGain.connect(audioContext.destination);
+            bassOsc.start();
+            alertOscillators.push(bassOsc);
+        }
+        
+        // 停止所有音效
+        function stopAllSounds() {
+            if (alertInterval) {
+                clearInterval(alertInterval);
+                alertInterval = null;
+            }
+            
+            alertOscillators.forEach(osc => {
+                try { osc.stop(); } catch(e) {}
+            });
+            alertOscillators = [];
+            
+            if (alertGainNode) {
+                try { alertGainNode.disconnect(); } catch(e) {}
+                alertGainNode = null;
+            }
+        }
+        
+        // ============ 告警系统 ============
+        function triggerAlert() {
+            if (!isMonitoring || isAlerting) return;
+            
+            isAlerting = true;
+            alertCount++;
+            document.getElementById('count').textContent = alertCount;
+            
+            // 更新UI
+            document.getElementById('status').className = 'status alert';
+            document.getElementById('status').textContent = '⚠️ 画面静止！正在告警...';
+            document.getElementById('alertOverlay').classList.add('show');
+            document.getElementById('silentBtn').classList.remove('hidden');
+            document.getElementById('progressFill').classList.add('alert');
+            
+            updateStatus('frameStatus', '⚠️ 静止告警', 'warning');
+            
+            // 播放音效
+            playAlertSound();
+        }
+        
+        function playAlertSound() {
+            if (!isAlerting) return;
+            
+            const soundType = document.getElementById('alertSoundType').value;
+            
+            // 初始化音频上下文
+            if (!audioContext) {
+                initAudio();
+            }
+            
+            // 播放对应音效
+            switch(soundType) {
+                case 'nuke':
+                    playRedAlertNuke();
+                    break;
+                case 'mega':
+                    playMegaAlert();
+                    break;
+                case 'missile':
+                    playMissileAlert();
+                    break;
+                case 'siren':
+                    playAirRaidSiren();
+                    break;
+                case 'urgent':
+                    playUrgentAlert();
+                    break;
+                case 'voice':
+                default:
+                    // 仅语音
+                    break;
+            }
+            
+            // 叠加语音（所有模式都有语音）
+            speakLoop();
+        }
+        
+        function speakLoop() {
+            if (!isAlerting) return;
+            
+            // 大幅降低背景音量让语音更突出（模拟语音放大200%）
+            if (bgGainNode && audioContext) {
+                const now = audioContext.currentTime;
+                bgGainNode.gain.setValueAtTime(bgGainNode.gain.value, now);
+                bgGainNode.gain.linearRampToValueAtTime(0.02, now + 0.2);  // 背景降到2%（几乎静音）
+                bgGainNode.gain.linearRampToValueAtTime(0.15, now + 2.8);  // 语音结束后恢复
+            }
+            
+            // 延迟200ms后开始语音，让警报声先响
+            setTimeout(() => {
+                if (!isAlerting) return;
+                
+                // 重新初始化语音引擎确保最大音量
+                const speech = new SpeechSynthesisUtterance("你掉线了！！你掉线了！！");
+                speech.lang = "zh-CN";
+                speech.rate = 0.8;  // 稍慢更清晰
+                speech.pitch = 1.3;  // 音调更高更醒目
+                speech.volume = 1.0;  // 最大音量
+                
+                // 选择中文语音
+                const voices = speechSynthesis.getVoices();
+                const zhVoice = voices.find(v => v.lang.includes('zh'));
+                if (zhVoice) speech.voice = zhVoice;
+                
+                speechSynthesis.cancel();
+                speechSynthesis.speak(speech);
+            }, 200);
+            
+            speechInterval = setInterval(() => {
+                if (isAlerting) {
+                    // 大幅降低背景音量
+                    if (bgGainNode && audioContext) {
+                        const now = audioContext.currentTime;
+                        bgGainNode.gain.linearRampToValueAtTime(0.02, now + 0.2);
+                        bgGainNode.gain.linearRampToValueAtTime(0.15, now + 2.8);
+                    }
+                    
+                    // 重新创建语音确保最大音量
+                    const speech = new SpeechSynthesisUtterance("你掉线了！！你掉线了！！");
+                    speech.lang = "zh-CN";
+                    speech.rate = 0.8;
+                    speech.pitch = 1.3;
+                    speech.volume = 1.0;
+                    
+                    const voices = speechSynthesis.getVoices();
+                    const zhVoice = voices.find(v => v.lang.includes('zh'));
+                    if (zhVoice) speech.voice = zhVoice;
+                    
+                    speechSynthesis.cancel();
+                    speechSynthesis.speak(speech);
+                } else {
+                    clearInterval(speechInterval);
+                    speechInterval = null;
+                }
+            }, 3000);  // 语音间隔
+        }
+        
+        function stopAlert() {
+            isAlerting = false;
+            
+            // 停止语音
+            speechSynthesis.cancel();
+            if (speechInterval) {
+                clearInterval(speechInterval);
+                speechInterval = null;
+            }
+            
+            // 停止所有音效
+            stopAllSounds();
+            
+            document.getElementById('alertOverlay').classList.remove('show');
+            document.getElementById('silentBtn').classList.add('hidden');
+            document.getElementById('progressFill').classList.remove('alert');
+            
+            if (isMonitoring) {
+                document.getElementById('status').className = 'status monitoring';
+                document.getElementById('status').textContent = '🟢 监控中... 画面正常';
+                updateStatus('frameStatus', '正常', 'normal');
+            }
+        }
+        
+        // ============ 辅助函数 ============
+        function updateStatus(id, text, type) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.textContent = text;
+                el.className = `status-indicator ${type}`;
+            }
+        }
+        
+        // ============ 音效试听功能 ============
+        let isPreviewPlaying = false;
+        let previewTimeout = null;
+        
+        function previewAlertSound() {
+            // 如果正在播放，停止它
+            if (isPreviewPlaying) {
+                stopPreviewSound();
+                return;
+            }
+            
+            // 初始化音频
+            if (!audioContext) {
+                initAudio();
+            }
+            
+            // 确保音频上下文激活
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            isPreviewPlaying = true;
+            isAlerting = true;
+            
+            // 更新按钮状态
+            const btn = document.querySelector('.btn-test-small');
+            if (btn) {
+                btn.classList.add('playing');
+                btn.textContent = '⏹️ 停止';
+            }
+            
+            // 更新状态显示
+            const status = document.getElementById('status');
+            status.className = 'status alert';
+            const soundName = document.getElementById('alertSoundType').selectedOptions[0].text;
+            status.textContent = `🔊 正在试听: ${soundName.split(' ')[0]}`;
+            
+            // 播放音效
+            const soundType = document.getElementById('alertSoundType').value;
+            
+            switch(soundType) {
+                case 'nuke':
+                    playRedAlertNuke();
+                    break;
+                case 'mega':
+                    playMegaAlert();
+                    break;
+                case 'missile':
+                    playMissileAlert();
+                    break;
+                case 'siren':
+                    playAirRaidSiren();
+                    break;
+                case 'urgent':
+                    playUrgentAlert();
+                    break;
+                case 'voice':
+                    // 仅语音模式
+                    break;
+            }
+            
+            // 播放语音（延迟200ms）
+            if (soundType !== 'voice') {
+                setTimeout(() => {
+                    if (isPreviewPlaying) {
+                        const previewSpeech = new SpeechSynthesisUtterance("你掉线了！！你掉线了！！");
+                        previewSpeech.lang = "zh-CN";
+                        previewSpeech.rate = 0.8;
+                        previewSpeech.pitch = 1.3;
+                        previewSpeech.volume = 1.0;
+                        
+                        const voices = speechSynthesis.getVoices();
+                        const zhVoice = voices.find(v => v.lang.includes('zh'));
+                        if (zhVoice) previewSpeech.voice = zhVoice;
+                        
+                        speechSynthesis.cancel();
+                        speechSynthesis.speak(previewSpeech);
+                    }
+                }, 200);
+            } else {
+                // 仅语音模式直接播放
+                const previewSpeech = new SpeechSynthesisUtterance("你掉线了！！你掉线了！！");
+                previewSpeech.lang = "zh-CN";
+                previewSpeech.rate = 0.8;
+                previewSpeech.pitch = 1.3;
+                previewSpeech.volume = 1.0;
+                
+                const voices = speechSynthesis.getVoices();
+                const zhVoice = voices.find(v => v.lang.includes('zh'));
+                if (zhVoice) previewSpeech.voice = zhVoice;
+                
+                speechSynthesis.cancel();
+                speechSynthesis.speak(previewSpeech);
+            }
+            
+            // 3秒后自动停止
+            previewTimeout = setTimeout(() => {
+                stopPreviewSound();
+            }, 3000);
+        }
+        
+        function stopPreviewSound() {
+            isPreviewPlaying = false;
+            isAlerting = false;
+            
+            // 清除自动停止定时器
+            if (previewTimeout) {
+                clearTimeout(previewTimeout);
+                previewTimeout = null;
+            }
+            
+            // 停止所有音效
+            stopAllSounds();
+            
+            // 停止语音
+            speechSynthesis.cancel();
+            
+            // 恢复按钮状态
+            const btn = document.querySelector('.btn-test-small');
+            if (btn) {
+                btn.classList.remove('playing');
+                btn.textContent = '🔊 试听';
+            }
+            
+            // 恢复状态显示
+            const status = document.getElementById('status');
+            if (!isMonitoring) {
+                status.className = 'status idle';
+                status.textContent = '⚪ 未启动监控';
+            } else {
+                status.className = 'status monitoring';
+                status.textContent = '🟢 监控中... 画面正常';
+            }
+        }
+        
+        // 当用户切换音效类型时，如果正在播放则停止
+        document.getElementById('alertSoundType').addEventListener('change', () => {
+            if (isPreviewPlaying) {
+                stopPreviewSound();
+            }
+        });
+        
+        function testSpeech() {
+            previewAlertSound();
+        }
+        
+        // 灵敏度滑块显示
+        document.getElementById('sensitivity').addEventListener('input', (e) => {
+            document.getElementById('sensitivityValue').textContent = e.target.value;
+            // 显示当前灵敏度对应的检测阈值
+            const threshold = (e.target.value / 1000 * 100).toFixed(1);
+            document.getElementById('sensitivityHint').textContent = `（变化<${threshold}%算静止）`;
+        });
+        
+        // 初始化灵敏度提示
+        document.addEventListener('DOMContentLoaded', () => {
+            const sens = document.getElementById('sensitivity').value;
+            const threshold = (sens / 1000 * 100).toFixed(1);
+            const hint = document.getElementById('sensitivityHint');
+            if (hint) hint.textContent = `（变化<${threshold}%才算静止）`;
+        });
+        
+        // 页面加载检查
+        window.addEventListener('load', () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                alert('您的浏览器不支持屏幕捕获功能\n请使用 Chrome、Edge 或 Firefox 浏览器');
+                document.getElementById('selectBtn').disabled = true;
+            }
+            
+            if (!('speechSynthesis' in window)) {
+                alert('您的浏览器不支持语音合成功能');
+            }
+        });
+    </script>
+</body>
+</html>
